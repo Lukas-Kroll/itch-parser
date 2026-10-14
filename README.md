@@ -61,7 +61,7 @@ Clone the repository and build in Release mode:
 
 ```bash
 # Clone repository
-git clone [https://github.com/Lukas-Kroll/itch-parser.git](https://github.com/Lukas-Kroll/itch-parser.git)
+git clone https://github.com/Lukas-Kroll/itch-parser.git
 cd itch-parser
 
 # Configure and build
