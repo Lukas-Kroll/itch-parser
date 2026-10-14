@@ -8,7 +8,6 @@ A high-performance, zero-copy C++ parser for the **NASDAQ ITCH 5.0** market data
 ## 🎯 Motivation & Background
 
 I built this project to explore how to efficiently parse massive multi-gigabyte binary datasets in systems programming. Financial market data feeds like NASDAQ ITCH 5.0 require handling hundreds of millions of variable-length packets under tight performance constraints. I wanted to build a custom parser from scratch, comparing a raw, memory-mapped single-threaded baseline against a cache-aligned, lock-free multi-threaded ring buffer architecture.
----
 
 ## 🚀 Key Architectural Features
 
