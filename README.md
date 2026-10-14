@@ -1,74 +1,102 @@
-# NASDAQ ITCH 5.0 High-Performance Binary Parser
+# NASDAQ ITCH 5.0 Parser: Single-Threaded vs. Sharded Lock-Free Pipeline
 
-A high-performance, zero-copy C++ parser for the **NASDAQ ITCH 5.0** market data protocol. This project explores and benchmarks architectural tradeoffs between a raw single-threaded baseline (`mmap`) and a multi-threaded lock-free producer-consumer architecture using SPSC ring buffers.
+A C++20 implementation of a message-framing parser for the NASDAQ ITCH 5.0 market data format, built to study how far a sequential memory-mapped scan can go and when a multi-threaded SPSC ring-buffer pipeline starts to pay off.
 
----
+Two interchangeable implementations behind one interface:
 
+| Variant | Idea |
+| :--- | :--- |
+| `NaiveParser` | `mmap` the file and walk the length-prefixed messages in a single thread |
+| `MTParser` | One producer frames the messages and shards them by stock to 4 worker threads via lock-free SPSC ring buffers, with batched pushes |
 
-## 🎯 Motivation & Background
+## Scope
 
-I built this project to explore how to efficiently parse massive multi-gigabyte binary datasets in systems programming. Financial market data feeds like NASDAQ ITCH 5.0 require handling hundreds of millions of variable-length packets under tight performance constraints. I wanted to build a custom parser from scratch, comparing a raw, memory-mapped single-threaded baseline against a cache-aligned, lock-free multi-threaded ring buffer architecture.
+This project focuses on **throughput of the I/O and dispatch path**, not on full protocol decoding.
 
-## 🚀 Key Architectural Features
+- **Done:** message framing (length prefix, message type), zero-copy access to payloads through `mmap`, sharding by instrument, lock-free hand-off to workers, benchmarking harness.
+- **Not done (yet):** decoding message fields (Add Order, Trade, ...) and maintaining an order book. In both variants the "consumer" work is a message counter, so the numbers below measure the framing and hand-off cost, not realistic downstream processing.
 
-* **Zero-Copy Memory-Mapped I/O:** Utilizes `mmap` to ingest multi-gigabyte binary datasets directly from disk without redundant user-space buffering.
-* **Polymorphic Design:** Clean interface-based contract (`InterfaceParser`) allowing seamless runtime polymorphism between execution models.
-* **Lock-Free Multi-Threading (SPSC Ring Buffer):** Implements a cache-aligned, lock-free Single-Producer Single-Consumer ring buffer per worker thread to avoid heavy mutex contention.
-* **Local Staging Batching:** Minimizes atomic overhead and cache-line bouncing by staging messages in local L1/L2 cache arrays before bulk pushing to ring buffers.
-* **Rigorous Benchmarking:** Built-in `std::chrono` multi-run benchmarking with warmup segregation and average throughput calculation.
+## Design
 
----
+```
+                       ┌──────────────┐   SPSC ring   ┌──────────┐
+ mmap'd ITCH file ───▶ │   Producer   │ ────────────▶│ Worker 0 │
+ (read-only)           │ frame + shard│   SPSC ring   ├──────────┤
+                       │ + batch (32) │ ────────────▶ │ Worker 1 │
+                       └──────────────┘      ...      │   ...    │
+                                                      └──────────┘
+```
 
-## 🖥️ Test Environment & Hardware
+- **Zero-copy input:** the file is mapped read-only; messages are referenced by pointer, never copied out of the mapping.
+- **Sharding:** the producer routes each message by the low byte of its *Stock Locate* field (`% 4`), so all messages of one instrument go to the same worker and per-instrument ordering is preserved.
+- **SPSC ring buffer (`ringbuffer.hpp`):** power-of-two capacity, producer and consumer indices on separate cache lines (`alignas(64)`) to avoid false sharing, `acquire`/`release` ordering only (no sequentially consistent atomics, no locks).
+- **Batching:** the producer collects 32 messages per worker in a local array and publishes them with a single `release` store, which reduces atomic traffic on the shared indices.
+- **Interface:** `InterfaceParser` (`Parser.hpp`) lets `main.cpp` select the implementation at runtime (`-v naive|mt`).
 
-The benchmarks were conducted on a **TUM departmental Linux server**:
-* **CPU:** AMD EPYC 9554P 64-Core Processor
-* **Compiler:** GCC 13.3.0 (with `-O3` Release optimizations)
-* **Build System:** CMake 3.28.3
+## Benchmark
 
----
+**Setup**
 
-## 📊 Benchmark Results & Analysis
+| | |
+| :--- | :--- |
+| Dataset | `01302020.NASDAQ_ITCH50`, ≈ 12.1 GiB, ≈ 423 M messages |
+| CPU | AMD EPYC 9554P (64 cores), university Linux server |
+| Toolchain | GCC 13.3.0, `-O3`, CMake 3.28.3 |
+| Method | 1 warm-up run + 3 measured runs per variant, average reported (`std::chrono`) |
+| Page cache | Warm: the warm-up run loads the file into RAM, so disk speed is **not** measured |
 
-Tested on a **12.35 GB** raw NASDAQ ITCH 5.0 dataset (`01302020.NASDAQ_ITCH50`) containing over **423 million messages**.
+**Results**
 
-| Parser Architecture | Avg. Time Taken | Throughput (MB/s) | Architectural Characteristics |
-| :--- | :--- | :--- | :--- |
-| **NaiveParser** (Single-Threaded) | **1.48 s** | **8,365.88 MB/s** | Sequential linear scan; leverages hardware prefetching; zero synchronization overhead. |
-| **MTParser** (Multi-Threaded / Batching) | **6.97 s** | **1,773.01 MB/s** | 4-worker pipeline; distributes load via ring buffers; incurs atomic/scheduling overhead for lightweight payloads. |
+| Variant | Avg. time | Throughput | Messages/s |
+| :--- | ---: | ---: | ---: |
+| `NaiveParser` (1 thread) | 1.48 s | 8,366 MiB/s | ≈ 286 M |
+| `MTParser` (1 producer + 4 workers) | 6.97 s | 1,773 MiB/s | ≈ 61 M |
 
-### 💡 Core Engineering Insight: Why Naive Outperformed MT Here
-When parsing raw streams where the per-message payload workload is extremely lightweight (e.g., header skipping and sequence counting), the sequential **`NaiveParser`** dominates. The CPU's hardware prefetchers seamlessly stream contiguous memory into cache, achieving near-memory-bandwidth speeds (~8.36 GB/s). 
+Throughput is computed as file size / wall time, with MiB = 1024².
 
-The multi-threaded **`MTParser`** introduces thread scheduling, atomic memory barriers, and ring buffer tracking. While its throughput of **1.76 GB/s** is phenomenal for a multi-core design, it acts as a reminder that synchronization overhead only pays off when the consumer performs heavy computation per message (such as maintaining a live limit order book).
+## Analysis: why is the multi-threaded version slower?
 
----
+The naive scan is already close to memory-bound: ITCH messages are variable-length, and each message's start is only known after reading the previous one's length, so **framing is inherently sequential**. In `MTParser` this sequential walk still exists, it just lives in the producer thread. The producer therefore performs the same work as `NaiveParser` *plus* copying message descriptors into batches and publishing them to the ring buffers, while the workers have almost nothing to do (increment a counter). The result is a pipeline limited by its single producer (Amdahl's law), with extra overhead on top.
 
-## 🛠️ Tech Stack & Requirements
+Parallelism can only help when the per-message work in the consumers is substantially more expensive than the framing step, for example decoding fields and updating a limit order book per instrument. That is the natural next step for this project.
 
-* **Language:** C++20
-* **Build System:** CMake (>= 3.28)
-* **Compiler:** GCC (>= 13.3.0) / Linux (POSIX `mmap`, `unistd.h`)
+## Limitations & Future Work
 
----
+- Add real message decoding and a per-instrument order book as consumer workload, then re-run the comparison to find the break-even point.
+- Input is assumed to be well-formed; there are no bounds checks on truncated files.
+- Thread pinning, `madvise(MADV_SEQUENTIAL)` / huge pages, and hardware counters (`perf stat`) to separate cache, page-fault and synchronization effects.
+- Sharding by `% 4` of one byte can produce uneven load; a better hash or dynamic balancing could be evaluated.
+- Unit tests for the ring buffer (single-producer/single-consumer stress test, ideally under ThreadSanitizer).
 
-## ⚙️ Building & Running
+## Build & Run
 
-> ⚠️ **Note on Data:** Due to file size constraints (12.35 GB), the raw NASDAQ ITCH 5.0 binary file is **not** included in this repository. To run the benchmarks, you must supply your own ITCH 5.0 binary data file (e.g., from Nasdaq's data distribution services or a custom sample).
-
-Clone the repository and build in Release mode:
+Requirements: Linux (POSIX `mmap`), x86-64, GCC ≥ 13, CMake ≥ 3.28.
 
 ```bash
-# Clone repository
 git clone https://github.com/Lukas-Kroll/itch-parser.git
 cd itch-parser
 
-# Configure and build
-cmake -DCMAKE_BUILD_TYPE=Release -S . -B cmake-build-debug
-cmake --build cmake-build-debug --parallel 4
+cmake -DCMAKE_BUILD_TYPE=Release -S . -B build
+cmake --build build --parallel
 
-# Run Naive Parser baseline with your file path
-./cmake-build-debug/ITCH_Parser -v naive -f /path/to/your/itch_file
+./build/ITCH_Parser -v naive -f /path/to/file.NASDAQ_ITCH50
+./build/ITCH_Parser -v mt    -f /path/to/file.NASDAQ_ITCH50
+```
 
-# Run Multi-Threaded Parser
-./cmake-build-debug/ITCH_Parser -v mt -f /path/to/your/itch_file
+| Flag | Meaning | Default |
+| :--- | :--- | :--- |
+| `-v`, `--version` | `naive` or `mt` | `naive` |
+| `-f`, `--file` | path to the ITCH 5.0 file | `01302020.NASDAQ_ITCH50` |
+
+**Data:** the dataset is not included because of its size. Sample ITCH 5.0 files are published by Nasdaq (e.g. `01302020.NASDAQ_ITCH50.gz`); decompress before use.
+
+## Project Structure
+
+| File | Purpose |
+| :--- | :--- |
+| `Parser.hpp` | `InterfaceParser` base class |
+| `NaiveParser.{hpp,cpp}` | Single-threaded `mmap` scan |
+| `MTParser.{hpp,cpp}` | Producer / sharded worker pipeline |
+| `ringbuffer.hpp` | Lock-free SPSC ring buffer (single and batch operations) |
+| `messages.h`, `message_information.h` | ITCH message definitions and the lightweight message view |
+| `main.cpp` | CLI and benchmark harness |
