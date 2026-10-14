@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="TumPower (9da42fb4-1f4f-4c22-926a-6cae0065e345)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/u/halle/krolu/home_at/itch_parser" local="$PROJECT_DIR$" />
+          </mappings>
+          <excludedPaths>
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-debug" />
+            <excludedPath local="true" path="$PROJECT_DIR$/../../../../itch_parser" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-wsl" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-debug-wsl" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-wsl" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-remote_release" />
+            <excludedPath local="true" path="$PROJECT_DIR$/../../../../itch_parser" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-debug" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-debug-wsl" />
+            <excludedPath local="true" path="$PROJECT_DIR$/itch_parser" />
+          </excludedPaths>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>
