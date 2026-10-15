@@ -20,32 +20,19 @@
 #include "messages.h"
 #include "message_information.h"
 #include "NaiveParser.hpp"
+#include "MappedFile.hpp"
 
 
 size_t NaiveParser::parse(const std::string& filepath)
 {
-   int fileDescriptor = open(filepath.c_str(), O_RDONLY);
-    if (fileDescriptor == -1)
-    {
-        throw std::runtime_error("ERROR! Couldn't open file at: " + filepath);
-    }
 
-    size_t fileSize = std::filesystem::file_size(filepath);
+    MappedFile file (filepath);
 
-    void* filePointer = mmap(nullptr, fileSize, PROT_READ, MAP_PRIVATE, fileDescriptor, 0);
-
-    if (filePointer == MAP_FAILED)
-    {
-        close(fileDescriptor);
-        throw std::runtime_error("ERROR! couldn't map memory!");
-    }
+    const uint8_t* current = file.data();
+    const uint8_t* end = current + file.size();
 
 
-    const uint8_t* cursor = static_cast<const uint8_t*> (filePointer);
-    const uint8_t* end = cursor + fileSize;
 
-
-    const uint8_t* current = cursor;
     size_t messageCounter   = 0;
 
     while (current < end)
@@ -58,9 +45,6 @@ size_t NaiveParser::parse(const std::string& filepath)
 
         current+= sizeByte + 2;
     }
-    //cleanup
 
-    munmap(filePointer, fileSize);
-    close(fileDescriptor);
     return messageCounter;
 }

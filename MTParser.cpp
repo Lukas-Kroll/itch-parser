@@ -12,39 +12,27 @@
 #include <thread>
 #include <array>
 #include <x86intrin.h>
+#include <memory>
 //my own headers:
 #include "MTParser.hpp"
 #include "ringbuffer.hpp"
 #include "messages.h"
 #include "message_information.h"
-
+#include "MappedFile.hpp"
 
 size_t MTParser::parse(const std::string& filepath)
 {
-   int fileDescriptor = open(filepath.c_str(), O_RDONLY);
-    if (fileDescriptor == -1)
-    {
-        throw std::runtime_error("ERROR! Couldn't open file at: " + filepath);
-    }
+    MappedFile file (filepath);
 
-    size_t fileSize = std::filesystem::file_size(filepath);
-
-    void* filePointer = mmap(nullptr, fileSize, PROT_READ, MAP_PRIVATE, fileDescriptor, 0);
-
-    if (filePointer == MAP_FAILED)
-    {
-        close(fileDescriptor);
-        throw std::runtime_error("ERROR! couldn't map memory!");
-    }
-
-
-    const uint8_t* cursor = static_cast<const uint8_t*> (filePointer);
-    const uint8_t* end = cursor + fileSize;
+    const uint8_t* cursor = file.data();
+    const uint8_t* end = cursor + file.size();
 
     constexpr std::size_t NUM_OF_Workers = 4;
     constexpr std::size_t BATCH_SIZE = 32;
 
-    alignas(64) ringbuffer<Message_Information, 65536> stockBuffer[NUM_OF_Workers];//for specific stocks
+
+    auto stockBuffer = std::make_unique<ringbuffer<Message_Information, 65536>[]>(NUM_OF_Workers);
+
 
     //check if producer finished:
     std::atomic<bool> producerDone{false};
@@ -149,10 +137,7 @@ size_t MTParser::parse(const std::string& filepath)
         worker.join();
     }
 
-    //cleanup: || goto cleanup
 
-    munmap(filePointer, fileSize);
-    close(fileDescriptor);
     size_t total_messages = 0;
     for (std::size_t count : workerMessageCounts)
     {
