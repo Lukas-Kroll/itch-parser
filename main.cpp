@@ -1,8 +1,6 @@
 #include <string>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
+#include <chrono>
+#include <memory>
 #include <filesystem>
 #include <iostream>
 #include <thread>
@@ -68,7 +66,7 @@ int main(int argc, char* argv[])
     uintmax_t fileSize = std::filesystem::file_size(filepath);
     double fileSizeMB = static_cast<double>(fileSize) / (1024 * 1024);
 
-    constexpr int totalRuns = 4;
+    constexpr int totalRuns = 11;
     std::vector<double> runTimesSeconds;
     runTimesSeconds.reserve(totalRuns-1);
 
@@ -90,11 +88,11 @@ int main(int argc, char* argv[])
 
             if (run == 0)
             {
-                std::cout << "[Warmup Run] Time: " << seconds << " s | Throughput: " << throughputMBs << " MB/s\n";
+                std::cout << "[Warmup Run] Time: " << seconds << " s | Throughput: " << throughputMBs << " MiB/s\n";
             }
             else
             {
-                std::cout << "[Run " << run << "]       Time: " << seconds << " s | Throughput: " << throughputMBs << " MB/s\n";
+                std::cout << "[Run " << run << "]       Time: " << seconds << " s | Throughput: " << throughputMBs << " MiB/s\n";
                 runTimesSeconds.push_back(seconds);
             }
         }

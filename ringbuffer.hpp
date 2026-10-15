@@ -5,6 +5,7 @@
 #ifndef ITCH_PARSER_RINGBUFFER_HPP
 #define ITCH_PARSER_RINGBUFFER_HPP
 #include <atomic>
+#include <algorithm>
 
 template <typename T, const std::size_t Capacity>
 
