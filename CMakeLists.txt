@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.28.3)
-project(ITCH_Parser)
+project(ITCH_Parser LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if(CMAKE_COMPILER_IS_GNUXX OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
-    add_compile_options(-O3 -march=native -Wall -Wextra)
-endif ()
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 add_executable(ITCH_Parser main.cpp messages.h
         message_information.h
@@ -16,10 +16,9 @@ add_executable(ITCH_Parser main.cpp messages.h
         Parser.hpp
         NaiveParser.hpp
         NaiveParser.cpp
+        MappedFile.hpp
 )
 
-if (MSVC)
-    target_compile_options(ITCH_Parser PRIVATE /arch:AVX2)
-else ()
-    target_compile_options(ITCH_Parser PRIVATE -mavx2)
-endif ()
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(ITCH_Parser PRIVATE -Wall -Wextra)
+endif()
