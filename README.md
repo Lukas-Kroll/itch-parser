@@ -27,7 +27,7 @@ This project focuses on **throughput of the I/O and dispatch path**, not on full
                                                       └──────────┘
 ```
 
-- **Zero-copy input:** the file is mapped read-only; messages are referenced by pointer, never copied out of the mapping.
+- **Zero-copy input:** the file is mapped read-only (wrapped in a small RAII class, `MappedFile`, so the mapping is never leaked); messages are referenced by pointer, never copied out of the mapping.
 - **Sharding:** the producer routes each message by the low byte of its *Stock Locate* field (`% 4`), so all messages of one instrument go to the same worker and per-instrument ordering is preserved.
 - **SPSC ring buffer (`ringbuffer.hpp`):** power-of-two capacity, producer and consumer indices on separate cache lines (`alignas(64)`) to avoid false sharing, `acquire`/`release` ordering only (no sequentially consistent atomics, no locks).
 - **Batching:** the producer collects 32 messages per worker in a local array and publishes them with a single `release` store, which reduces atomic traffic on the shared indices.
@@ -39,18 +39,18 @@ This project focuses on **throughput of the I/O and dispatch path**, not on full
 
 | | |
 | :--- | :--- |
-| Dataset | `01302020.NASDAQ_ITCH50`, ≈ 12.1 GiB, ≈ 423 M messages |
+| Dataset | `01302020.NASDAQ_ITCH50`, 12,352 MiB (≈ 12.1 GiB), 423,285,709 messages |
 | CPU | AMD EPYC 9554P (64 cores), university Linux server |
 | Toolchain | GCC 13.3.0, `-O3`, CMake 3.28.3 |
-| Method | 1 warm-up run + 3 measured runs per variant, average reported (`std::chrono`) |
+| Method | 1 warm-up run + 10 measured runs per variant, median (min–max) reported; shared server |
 | Page cache | Warm: the warm-up run loads the file into RAM, so disk speed is **not** measured |
 
 **Results**
 
-| Variant | Avg. time | Throughput | Messages/s |
+| Variant | Median time | Throughput | Messages/s |
 | :--- | ---: | ---: | ---: |
-| `NaiveParser` (1 thread) | 1.48 s | 8,366 MiB/s | ≈ 286 M |
-| `MTParser` (1 producer + 4 workers) | 6.97 s | 1,773 MiB/s | ≈ 61 M |
+| `NaiveParser` (1 thread) | 1.79 s (1.78–1.80) | 6,896 MiB/s | ≈ 236 M |
+| `MTParser` (1 producer + 4 workers) | 5.67 s (4.94–5.79) | 2,179 MiB/s | ≈ 75 M |
 
 Throughput is computed as file size / wall time, with MiB = 1024².
 
@@ -63,7 +63,7 @@ Parallelism can only help when the per-message work in the consumers is substant
 ## Limitations & Future Work
 
 - Add real message decoding and a per-instrument order book as consumer workload, then re-run the comparison to find the break-even point.
-- Input is assumed to be well-formed; there are no bounds checks on truncated files.
+- Input is assumed to be well-formed; a truncated file could cause an out-of-bounds read.
 - Thread pinning, `madvise(MADV_SEQUENTIAL)` / huge pages, and hardware counters (`perf stat`) to separate cache, page-fault and synchronization effects.
 - Sharding by `% 4` of one byte can produce uneven load; a better hash or dynamic balancing could be evaluated.
 - Unit tests for the ring buffer (single-producer/single-consumer stress test, ideally under ThreadSanitizer).
@@ -99,4 +99,5 @@ cmake --build build --parallel
 | `MTParser.{hpp,cpp}` | Producer / sharded worker pipeline |
 | `ringbuffer.hpp` | Lock-free SPSC ring buffer (single and batch operations) |
 | `messages.h`, `message_information.h` | ITCH message definitions and the lightweight message view |
+| `MappedFile.hpp` | RAII wrapper around `open`/`mmap`/`munmap`; the mapping is released automatically, also when an exception is thrown |
 | `main.cpp` | CLI and benchmark harness |
